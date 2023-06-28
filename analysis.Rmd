@@ -1,0 +1,186 @@
+---
+title: "Analysis"
+output: html_notebook
+---
+
+```{r}
+pacman::p_load(tidyverse, R.matlab, showtext, viridis, purrr, ggrepel, png, grid, ggthemes, forcats)
+```
+
+```{r fig.height=8, fig.width=8, message=FALSE}
+sweep_4 = read_csv("../data/analysis/4_sweep.csv")
+sweep_16 = read_csv("../data/analysis/16_sweep.csv")
+stacked_16 = read_csv("../data/analysis/stack_lstm.csv")
+transfer_16 = read_csv("../data/analysis/16_transfer_sweep.csv") %>% 
+  mutate(pretrainable = paste0(pretrained, trainable))
+stack_transfer_freeze = read_csv("../data/analysis/transfer_learning.csv") %>% 
+  mutate(layers_transferred = factor(layers_transferred))
+
+stack_transfer_freeze_pivot <- stack_transfer_freeze %>%
+  group_by(run_id) %>%
+  summarise(
+    best_val_loss = mean(best_val_loss),
+    val_loss_last = last(val_loss),
+    val_loss_1 = nth(val_binary_crossentropy, 1),
+    val_loss_50 = nth(val_binary_crossentropy, 50),
+    val_loss_10 = nth(val_binary_crossentropy, 10),
+    val_loss_25 = nth(val_binary_crossentropy, 25),
+    val_loss_100 = nth(val_binary_crossentropy, 100),
+    bci_task = last(str_extract(bci_task, "(?<=/bci_task_\\d_)[1-3a-z_]+(?=.snirf)")),
+    layers_transferred = last(layers_transferred),
+    trainable = last(trainable),
+    model = last(model)
+  ) %>% 
+  filter(model == "models/model-lstm-3.h5") %>% 
+  group_by(bci_task, layers_transferred, trainable) %>% 
+  summarise(
+    sd_best_val_loss = sd(best_val_loss, na.rm=T),
+    sd_val_loss_last = sd(val_loss_last, na.rm=T),
+    sd_val_loss_1 = sd(val_loss_1, na.rm=T),
+    sd_val_loss_10 = sd(val_loss_10, na.rm=T),
+    sd_val_loss_25 = sd(val_loss_25, na.rm=T),
+    sd_val_loss_50 = sd(val_loss_50, na.rm=T),
+    sd_val_loss_100 = sd(val_loss_100, na.rm=T),
+    mean_best_val_loss = mean(best_val_loss, na.rm=T),
+    mean_val_loss_last = mean(val_loss_last, na.rm=T),
+    mean_val_loss_1 = mean(val_loss_1, na.rm=T),
+    mean_val_loss_10 = mean(val_loss_10, na.rm=T),
+    mean_val_loss_25 = mean(val_loss_25, na.rm=T),
+    mean_val_loss_50 = mean(val_loss_50, na.rm=T),
+    mean_val_loss_100 = mean(val_loss_100, na.rm=T),
+  ) %>% 
+  pivot_longer(cols=matches("val_loss"), names_pattern = "^(sd|mean)_(.*)$", names_to = c("limit", "val_loss")) %>% 
+  pivot_wider(names_from=limit, values_from=value, names_repair="check_unique") %>% 
+  mutate(
+    layers_transferred = as.numeric(layers_transferred) - 1,
+    label_position = layers_transferred,
+    val_loss = fct_relevel(val_loss, c("val_loss_10", "val_loss_25", "val_loss_50", "val_loss_100", "val_loss_last", "best_val_loss")),
+    trainable = if_else(trainable, "Yes", "No"),
+    trainable = fct_relevel(trainable, c("Yes", "No")),
+    train_loss = factor(paste0(trainable, val_loss)))
+
+
+p <- stack_transfer_freeze_pivot %>% 
+  filter(val_loss%in%c("val_loss_last")) %>% 
+  ggplot() +
+  aes(color=val_loss, fill=val_loss, linetype=trainable, label = round(mean, 2), x=layers_transferred, y=mean, ymin=mean - sd, ymax = mean + sd) +
+  geom_ribbon(alpha=0.1) +
+  geom_line() +
+  geom_text_repel(nudge_y = 0.1, aes(x = label_position)) +
+  facet_wrap(~bci_task, ncol = 1) +
+  # geom_line(aes(y=val_loss), alpha=0.35) +
+  theme_bw() +
+  scale_fill_viridis_d(end=0.7) +
+  scale_color_viridis_d(end=0.7) +
+  coord_cartesian(expand=F, ylim=c(0, 1), xlim=c(0, 4)) +
+  theme(
+    panel.spacing = unit(0, "cm"),
+    legend.position = "bottom",
+    text = element_text(family="Lato", lineheight = 0.5)
+  )
+
+```
+
+## Pretraining analysis
+```{r}
+df <- read_csv("../data/analysis/pretraining.csv")
+
+df %>% 
+  group_by(run_id) %>% 
+  summarise(
+    architecture = last(architecture),
+    future = last(future),
+    best_val_loss = last(best_val_loss)
+  ) %>% 
+  group_by(architecture, future) %>% 
+  summarise(
+    mu = mean(best_val_loss, na.rm=T),
+    sigma = sd(best_val_loss, na.rm=T),
+    n = n(),
+    min = min(best_val_loss, na.rm=T),
+    max = max(best_val_loss, na.rm=T),
+    range = max-min
+  )
+
+```
+## Transfer learning analysis
+```{r}
+df <- read_csv("../data/analysis/transfer_learning.csv")
+
+df %>% 
+  group_by(run_id) %>% 
+  summarise(
+    model = last(model),
+    layers_transferred = last(layers_transferred),
+    bci_task = last(bci_task),
+    n_augmentations = last(n_augmentations),
+    trainable = last(trainable),
+    best_val_loss = last(best_val_loss),
+    val_loss = last(val_loss)
+  ) %>% 
+  group_by(model, layers_transferred, bci_task, n_augmentations, trainable) %>% 
+  summarise(
+    mu = mean(best_val_loss, na.rm=T),
+    sigma = sd(best_val_loss, na.rm=T),
+    n = n(),
+    min = min(best_val_loss, na.rm=T),
+    max = max(best_val_loss, na.rm=T),
+    range = max-min
+  )
+
+df_grouped <- df %>% 
+  group_by(run_id) %>%
+  mutate(
+    model = case_when(
+      model == "models/model-dense.h5" ~ "dense",
+      model == "models/model-lstm-3.h5" ~ "lstm-3",
+      model == "models/model-lstm.h5" ~ "lstm"
+    )
+  ) %>% 
+  summarise(
+    model = last(model),
+    layers_transferred = last(layers_transferred),
+    bci_task = last(bci_task),
+    n_augmentations = last(n_augmentations),
+    trainable = last(trainable),
+    best_val_loss = last(best_val_loss),
+    start_val_loss = first(val_loss),
+    val_loss = last(val_loss),
+    val_acc = round(last(val_custom_binary_accuracy) * 100, 2),
+    best_val_acc = round(max(val_custom_binary_accuracy) * 100, 2),
+    acc = round(max(custom_binary_accuracy) * 100, 2),
+    pretrained = case_when(
+      layers_transferred == 0 ~ FALSE,
+      layers_transferred == 4 ~ TRUE,
+      TRUE ~ NA
+      )
+  ) %>%
+  drop_na(pretrained)
+
+
+df_grouped %>% 
+  group_by(bci_task, model, pretrained) %>% 
+  summarise(
+    max = max(acc, na.rm=T),
+    min = min(acc, na.rm=T),
+    mu = mean(acc, na.rm=T),
+    sigma = sd(acc, na.rm=T),
+    n = n(),
+    range = max-min
+  )
+
+df_grouped %>% 
+  group_by(bci_task, model, pretrained) %>% 
+  summarise(
+    max = max(val_acc, na.rm=T),
+    min = min(val_acc, na.rm=T),
+    mu = mean(val_acc, na.rm=T),
+    sigma = sd(val_acc, na.rm=T),
+    learned = first(val_loss) < first(start_val_loss),
+    n = n(),
+    range = max-min
+  ) %>% 
+  select(learned, everything())
+```
+
+
